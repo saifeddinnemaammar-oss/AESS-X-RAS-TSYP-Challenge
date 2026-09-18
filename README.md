@@ -29,14 +29,4 @@ Built with ROS2 Humble + Gazebo Classic.
 - docs/ - Architecture, beacon schema, failure cases, implementation plan.
 - report/ - Technical report for Phase 1.
 
-## Team
-- [Name] - Project Lead
-- [Name] - ROS/Simulation
-- [Name] - SLAM/Navigation
-- [Name] - Sensors/Events
-- [Name] - Comms/Beacons
-- [Name] - ONA/Backend
-- [Name] - Documentation
 
-## License
-MIT
