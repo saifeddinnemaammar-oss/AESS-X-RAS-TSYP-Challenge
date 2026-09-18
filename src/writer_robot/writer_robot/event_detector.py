@@ -1,0 +1,1 @@
+﻿# Event detector node - TODO

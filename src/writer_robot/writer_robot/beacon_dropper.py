@@ -1,0 +1,1 @@
+﻿# Beacon dropper node - TODO

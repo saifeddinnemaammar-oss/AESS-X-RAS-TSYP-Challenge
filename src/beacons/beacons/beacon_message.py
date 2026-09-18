@@ -1,0 +1,1 @@
+﻿# Beacon message definitions - TODO

@@ -1,0 +1,1 @@
+﻿# Beacon navigator node - TODO
