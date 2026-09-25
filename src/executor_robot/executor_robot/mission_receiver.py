@@ -1,1 +1,0 @@
-﻿# Mission receiver node - TODO

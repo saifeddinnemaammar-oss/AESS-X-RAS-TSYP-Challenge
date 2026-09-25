@@ -1,1 +1,0 @@
-﻿# Translator node - TODO
