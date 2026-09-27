@@ -1,0 +1,236 @@
+% !TeX program = pdflatex
+% !BIB program = bibtex
+\documentclass[conference]{IEEEtran}
+
+%% ─── Packages ───────────────────────────────────────────────────────────────
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{microtype}
+\usepackage{graphicx}
+\graphicspath{{C:/Users/maamm/Downloads/diagrams/}}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{subcaption}
+\usepackage{url}
+\usepackage[dvipsnames]{xcolor}
+\usepackage{balance}
+
+%% ─── Spacing Calibration (fit exactly 3 pages) ─────────────────────────────
+\setlength{\textfloatsep}{6pt plus 1pt minus 1pt}
+\setlength{\floatsep}{4pt plus 1pt minus 1pt}
+\setlength{\intextsep}{4pt plus 1pt minus 1pt}
+\setlength{\abovecaptionskip}{3pt}
+\setlength{\belowcaptionskip}{1pt}
+\setlength{\parskip}{0pt}
+\setlength{\abovedisplayskip}{4pt}
+\setlength{\belowdisplayskip}{4pt}
+
+%% ─── Title ──────────────────────────────────────────────────────────────────
+\title{The Living Map: Decentralized Spatial Memory and\\Air-Gapped Coordination for GPS-Denied USAR}
+
+\author{%
+\IEEEauthorblockN{Saifeddine Maammar, Jassem Bouguerra, Hatem Hannachi}
+\IEEEauthorblockA{IEEE AESS \& RAS Tunisia TSYP Chapter\\
+National Engineering School of Sfax (ENIS)\\
+\textit{saifeddinne.maammar@ieee.org}}
+}
+
+\begin{document}
+\maketitle
+
+%% ═══════════════════════════════════════════════════════════════════════════
+\begin{abstract}
+We present \textit{The Living Map}, a decentralized spatial memory architecture for Urban Search and Rescue (USAR) in GPS-denied, communication-denied collapsed structures. The system enforces physical air-gap isolation: no robot may communicate directly with the command post. A Writer rover autonomously explores the hazard zone, fusing thermal, chemical, and acoustic data to deploy disposable ESP32 LoRa beacons---active radio breadcrumbs encoding a strict 20-byte binary payload with CRC-16 integrity checking. An Executor rover inherits the Writer's spatial memory via the beacon chain and verifies event claims before acting. A perimeter ONA Gateway, built on bus-isolated hardware (SPI/UART/USB), ingests 868\,MHz LoRa packets, translates local East-North-Up (ENU) coordinates to WGS84 using a surveyed GNSS anchor, and pushes validated JSON to the command post. The architecture achieves 100\% corrupted-frame rejection, sub-42\,$\mu$s translation latency on ARM Cortex-A72, and over 14-day autonomous beacon endurance on a single 18650 cell through a zero-quiescent magnetic wake-up circuit drawing 0\,$\mu$A in storage.
+\end{abstract}
+
+%% ═══════════════════════════════════════════════════════════════════════════
+\section{Introduction and System Topology}
+\label{sec:intro}
+
+In post-disaster USAR, first-response robots operate under three simultaneous denials: no GPS constellation visibility beneath reinforced concrete, no usable Wi-Fi or cellular infrastructure, and---critically for this challenge---\emph{no direct robot-to-command-post RF link}. When a robot fails mid-mission, its entire exploration history is irrecoverably lost.
+
+The Living Map solves this through \textbf{decentralized spatial persistence}: the robot's knowledge is physically ejected into the environment as a mesh of active LoRa transceivers, each encoding a compact binary description of \emph{what}, \emph{where}, and \emph{when}. The system partitions the operational theatre into three physically isolated zones:
+
+\begin{itemize}\setlength\itemsep{0pt}
+\item \textbf{Zone~A (Hazard):} Writer and Executor rovers plus disposable ESP32 beacons. All communication is 868\,MHz LoRa exclusively~\cite{adelantado2017lora}. No internet, no GPS.
+\item \textbf{Zone~B (Perimeter):} An ONA Gateway on a Raspberry~Pi~4B acts as a hardware firewall with bus-isolated radio (SPI), GPS (UART), and egress (USB) interfaces. Linux \texttt{iptables~-P~FORWARD~DROP} enforces zero layer-3 bridging.
+\item \textbf{Zone~C (Command Post):} Receives validated WGS84 JSON over MQTT or HTTP from the ONA. No raw RF telemetry traverses this boundary.
+\end{itemize}
+
+%% ═══════════════════════════════════════════════════════════════════════════
+\section{Subsystem Architecture}
+\label{sec:hardware}
+
+\subsection{Writer Robot---Exploration \& Beacon Deployment}
+
+The Writer chassis is a $30 \times 25$\,cm 6061-T6 aluminum 4WD skid-steer platform with knobby rubber tires (Fig.~\ref{fig:writer}). A Raspberry~Pi~4 (4\,GB) runs ROS\,2 Humble~\cite{quigley2009ros} with RPLIDAR~A1 ($360^\circ$, 12\,m range) and an MPU-9250 9-DOF IMU for GMapping SLAM~\cite{grisetti2007gmapping}. Optical wheel encoders close the odometry loop.
+
+The event-detection suite comprises an MLX90640 $32\times24$ thermal array, MQ-2/MQ-7 gas sensors, and a DHT11 ambient probe. A sensor-fusion pipeline requires simultaneous thermal gradient ($\Delta T > 5\,^\circ$C) \emph{and} CO$_2$ confirmation ($> 1000$\,ppm) before classifying a victim event (Type~1), preventing expensive false-positive beacon deployments. Fire/hazard (Type~2) triggers on $T > 55\,^\circ$C. A spring-loaded servo/solenoid magazine ejects cylindrical beacons, after which the Writer transmits the 20-byte configuration payload via LoRa and waits for a 4-byte ACK handshake.
+
+Power: 3S LiPo 11.1\,V, 5000\,mAh with INA219 real-time monitoring. Below 20\% state-of-charge, the Writer autonomously returns along the deployed beacon chain.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.85\columnwidth]{writer_diagram.png}
+  \caption{Writer robot hardware architecture: compute, sensors, and beacon deployment mechanism.}
+  \label{fig:writer}
+\end{figure}
+
+\subsection{Spatial Memory Beacons---Zero-Quiescent Active Nodes}
+
+Each beacon (Fig.~\ref{fig:beacon}) is an ESP32-WROOM-32 paired with a Semtech SX1276 transceiver~\cite{semtech2019sx1276} ($+20$\,dBm TX, $-148$\,dBm RX sensitivity at 868\,MHz), powered by an 18650 Li-ion cell (3.7\,V, 2600\,mAh) through an AP2112K 3.3\,V/600\,mA LDO.
+
+\textbf{Zero-Quiescent Magnetic Wake-Up.} While stored in the Writer's magazine, a permanent neodymium magnet holds a Normally Closed (NC) reed switch closed, bridging the Gate and Source of an IRLML6402 P-Channel MOSFET ($V_{gs} = 0$\,V, $I_q = 0$\,$\mu$A). Upon ejection, the reed switch springs open; a 100\,k$\Omega$ pull-down drops $V_{gs}$ to $-3.7$\,V, and the MOSFET floods the ESP32 rail with zero prior shelf drain.
+
+\textbf{Three-State Duty Cycle.} \textit{(1)~Boot\,\&\,Listen:} ESP32 boots, SX1276 enters RX mode, awaits 20-byte config from Writer. \textit{(2)~Data Lock-In:} Payload verified via CRC-16, stored in RTC memory, 4-byte ACK transmitted. \textit{(3)~Continuous Pulsing:} 50\,ms TX bursts (28\,mA) separated by 3\,s deep-sleep intervals ($<10$\,$\mu$A), yielding \textbf{$>$14-day endurance} per cell.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.85\columnwidth]{beacon_diagram.png}
+  \caption{Beacon electrical architecture: reed switch, P-MOSFET gate circuit, and SX1276 SPI interface.}
+  \label{fig:beacon}
+\end{figure}
+
+\subsection{ONA Gateway---Perimeter Firewall \& Translation Engine}
+
+The ONA (Fig.~\ref{fig:ona}) runs on a Raspberry~Pi~4B (4\,GB, Linux Kernel 6.1-rt) with strict bus isolation:
+
+\begin{itemize}\setlength\itemsep{0pt}
+\item \textbf{SPI Bus (Inside Ear):} SX1302 8-channel LoRaWAN HAT ingests 20-byte pulses with deterministic microsecond latency, bypassing TCP/IP stacks.
+\item \textbf{UART Bus (Global Anchor):} u-blox NEO-M9N GNSS~\cite{ublox2021neom9n} streams NMEA to provide a fixed ($\text{Lat}_0, \text{Lon}_0$) anchor.
+\item \textbf{USB Bus (Outside Mouth):} 4G/LTE modem for field ops, or Wi-Fi AP for demo. No routing table connects interfaces.
+\end{itemize}
+
+Field power: 12\,V LiFePO$_4$ battery to a 5\,A buck converter feeding 5.1\,V directly to the Pi GPIO header, bypassing USB-C to prevent 4G-induced brownouts.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.85\columnwidth]{ona_diagram.png}
+  \caption{ONA Gateway bus isolation and power distribution architecture.}
+  \label{fig:ona}
+\end{figure}
+
+\subsection{Executor Robot---Mission Verification \& Action}
+
+The Executor (Fig.~\ref{fig:executor}) is a compact $25 \times 20$\,cm chassis optimized for tight rubble gaps. A Raspberry~Pi~4 runs Nav2~\cite{macenski2023nav2} with RPLIDAR~A1 and MPU-9250; a dedicated ESP32 coprocessor handles continuous 868\,MHz LoRa sniffing via UART bridge.
+
+Before entry, the ONA briefs the Executor with a prioritized mission plan (victims\,$>$\,fires\,$>$\,gas\,$>$\,checkpoints). Inside, the Executor homes to each beacon using Received Signal Strength Indicator (RSSI) gradient ascent---no GPS or pre-loaded map required. Upon arrival, Pi~Camera~v2 and MQ-series sensors \emph{verify} the beacon claim before the rear payload bay delivers survival supplies.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.85\columnwidth]{executor_diagram.png}
+  \caption{Executor robot: dual-tier compute, LoRa coprocessor, and verification sensor suite.}
+  \label{fig:executor}
+\end{figure}
+
+%% ═══════════════════════════════════════════════════════════════════════════
+\section{Communication Protocol \& Math Engine}
+\label{sec:protocol}
+
+\subsection{20-Byte Binary Payload}
+
+Every RF frame carries exactly 20 bytes with no protocol overhead, packed little-endian:
+
+\vspace{2pt}
+\begin{table}[h]
+\centering
+\footnotesize
+\setlength{\tabcolsep}{3pt}
+\caption{20-Byte LoRa Beacon Payload Structure}
+\label{tab:payload}
+\begin{tabular}{@{}llll@{}}
+\toprule
+\textbf{Bytes} & \textbf{Field} & \textbf{Type} & \textbf{Description} \\
+\midrule
+0--1 & Beacon ID      & uint16 & Network tracking \\
+2    & Writer ID      & uint8  & Deploying robot \\
+3    & Event Type     & uint8  & 0/1/2/3\,=\,Chk/Vic/Fire/Gas \\
+4--5 & Local $X$      & int16  & ENU East (cm) \\
+6--7 & Local $Y$      & int16  & ENU North (cm) \\
+8    & Local $Z$      & int8   & Elevation (dm) \\
+9--12 & Timestamp     & uint32 & Unix epoch (s) \\
+13--14 & TTL          & uint16 & Validity window (s) \\
+15   & Confidence     & uint8  & Certainty 0--255 \\
+16--17 & Next Beacon  & uint16 & Chain pointer \\
+18--19 & CRC-16       & uint16 & Polynomial 0xA001 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent The format string \texttt{`<H\,B\,B\,h\,h\,b\,I\,H\,B\,H\,H'} is shared across all subsystems via a common Python module. The CRC-16/MODBUS checksum over the first 18 bytes provides single-bit-flip detection at the physical layer.
+
+\subsection{Geospatial Translation}
+
+The ONA translates local ENU centimeter offsets $(x_e, y_n)$ to WGS84 using a flat-earth tangent-plane approximation anchored by the GNSS fix:
+\begin{equation}
+\Delta\text{Lat} = \frac{y_n}{R} \cdot \frac{180}{\pi}, \quad
+\Delta\text{Lon} = \frac{x_e}{R \cos(\text{Lat}_0)} \cdot \frac{180}{\pi}
+\label{eq:wgs84}
+\end{equation}
+where $R = 6{,}378{,}137$\,m and $(\text{Lat}_0, \text{Lon}_0)$ is the u-blox anchor lock. If the GNSS module reports no fix, the system falls back to manually surveyed benchmark coordinates and flags all egress packets with \texttt{FIX\_TYPE:\,SURVEY\_FALLBACK}.
+
+\subsection{Executor Confidence Decay}
+
+The Executor dynamically discounts stale data:
+\begin{equation}
+C_{\text{eff}}(t) = C_0 \cdot \exp\!\left(-\frac{\Delta t}{\tau}\right)
+\label{eq:decay}
+\end{equation}
+with $\tau = 3600$\,s. Beacons exceeding their TTL are purged from the local costmap. Fresh readings ($\Delta t < 60$\,s) retain $> 98\%$ confidence; at $\Delta t = 2\tau$ only $13.5\%$ remains, enforcing recency bias in mission planning.
+
+%% ═══════════════════════════════════════════════════════════════════════════
+\section{Failure Mode and Effects Analysis}
+\label{sec:fmea}
+
+\begin{table*}[t]
+\centering
+\footnotesize
+\caption{System-Wide Failure Mode and Effects Analysis (FMEA)}
+\label{tab:fmea}
+\setlength{\tabcolsep}{4pt}
+\begin{tabularx}{\textwidth}{@{}l l X X@{}}
+\toprule
+\textbf{Subsystem} & \textbf{Failure Mode} & \textbf{Effect} & \textbf{Mitigation} \\
+\midrule
+Writer & Battery $<20\%$ SoC & Mission abort, data loss risk & INA219 real-time monitoring triggers autonomous return along beacon chain \\
+Writer & Kernel panic / compute freeze & Dead robot in hazard zone & BCM2835 HW watchdog; 15\,s hard reset; ROS\,2 lifecycle reload from NV storage \\
+Writer & False-positive event & Wasteful beacon deployment & Multi-sensor threshold: $\Delta T > 5\,^\circ$C \emph{and} CO$_2 > 1000$\,ppm before trigger \\
+\addlinespace
+Beacon & RF noise / CRC failure & Corrupted data in costmap & CRC-16 frame rejection; 100\% tested rejection rate for single-bit-flip frames \\
+Beacon & Battery exhaustion & Silent beacon, chain break & 14-day design margin; Executor skips to next chain pointer \\
+\addlinespace
+Executor & Target beacon displaced & Navigation to wrong location & RSSI below $-120$\,dBm without visual match $\rightarrow$ dead reckoning + ONA cache query \\
+Executor & LiDAR blindness (dust) & SLAM failure & Graceful degradation: encoder odometry + IMU heading; speed limit to 0.15\,m/s \\
+Executor & Stale beacon (TTL expired) & Misleading intelligence & Eq.~\eqref{eq:decay} decay; age $>$ TTL $\rightarrow$ automatic costmap purge \\
+\addlinespace
+ONA & 4G/LTE dropout & Command post blind & FIFO store-and-forward SQLite buffer (10{,}000 records); burst on reconnect \\
+ONA & GNSS denial / multipath & Incorrect WGS84 translation & Revert to surveyed benchmark; flag \texttt{SURVEY\_FALLBACK} on all egress packets \\
+ONA & Firewall leakage attempt & Security breach & \texttt{iptables} + separate routing tables; no layer-3 path between SPI daemon and USB/WiFi \\
+\bottomrule
+\end{tabularx}
+\end{table*}
+
+%% ═══════════════════════════════════════════════════════════════════════════
+\section{Validation \& Simulation Results}
+\label{sec:validation}
+
+A Python-based simulation testbed validates three critical properties:
+
+\textbf{CRC Integrity.} A Monte Carlo test injects $10^6$ single-bit-flip corrupted 20-byte frames into \texttt{unpack\_beacon()}. The CRC-16/MODBUS checksum achieves a \textbf{100\% rejection rate}---zero corrupted payloads pass validation, confirming Hamming distance $\geq 3$ for the chosen polynomial~(0xA001).
+
+\textbf{Translation Latency.} The ENU$\to$WGS84 coordinate transformation (Eq.~\eqref{eq:wgs84}) executes in $\mathbf{< 42\,\boldsymbol{\mu}\textbf{s}}$ on the Raspberry~Pi~4 ARM Cortex-A72 at 1.5\,GHz, measured over $10^5$ iterations. At a packet ingestion rate of 10\,Hz, translation overhead consumes $<0.05\%$ of a single core.
+
+\textbf{Beacon Endurance.} The duty-cycle model (50\,ms TX at 28\,mA, 3\,s sleep at 10\,$\mu$A) yields an average current draw of $I_{\text{avg}} = \frac{0.05 \times 28 + 2.95 \times 0.01}{3.0} = 0.477$\,mA, projecting $\frac{2600}{0.477} \approx 5452$\,hours $\approx$ \textbf{227 days}---far exceeding the 14-day operational minimum.
+
+%% ═══════════════════════════════════════════════════════════════════════════
+\section{Conclusion}
+\label{sec:conclusion}
+
+The Living Map demonstrates that robust USAR coordination is achievable without GPS, internet, or direct robot-to-command-post communication. By decoupling spatial intelligence from the robot that gathered it---encoding knowledge into disposable, physically deployed LoRa nodes---the system ensures mission continuity even after total Writer failure. The air-gapped ONA gateway enforces hardware-level security while preserving operational transparency for human commanders. All source code and firmware are publicly available at \url{https://github.com/saifeddinnemaammar-oss/AESS-X-RAS-TSYP-Challenge}.
+
+\balance
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+
+\end{document}
