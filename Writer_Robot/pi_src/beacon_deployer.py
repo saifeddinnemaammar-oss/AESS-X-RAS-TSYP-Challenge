@@ -1,5 +1,6 @@
 """
 Beacon deployment mechanism.
+Modified to trigger physical deployment via ESP32 Serial commands.
 """
 import time
 import logging
@@ -14,30 +15,16 @@ try:
 except ImportError:
     import config
 
-try:
-    import RPi.GPIO as GPIO
-except ImportError:
-    GPIO = None
-
 class BeaconDeployer:
-    def __init__(self, lora_handler, max_beacons=10):
+    def __init__(self, lora_handler, esp_command_func, max_beacons=10):
         self.lora = lora_handler
+        self.send_esp = esp_command_func
         self.beacons_remaining = max_beacons
-        self.servo_pin = config.SERVO_PIN
-        self.pwm = None
-
-        if GPIO:
-            GPIO.setmode(GPIO.BCM)
-            GPIO.setup(self.servo_pin, GPIO.OUT)
-            self.pwm = GPIO.PWM(self.servo_pin, 50)  # 50Hz
-            self.pwm.start(2.5)  # 0 degrees
 
     def _activate_servo(self):
-        if self.pwm:
-            self.pwm.ChangeDutyCycle(12.5)  # 180 degrees
-            time.sleep(0.5)
-            self.pwm.ChangeDutyCycle(2.5)   # 0 degrees
-            time.sleep(0.5)
+        logging.info("Sending DROP_BEACON command to ESP32")
+        if self.send_esp:
+            self.send_esp("DROP_BEACON")
         else:
             logging.info("Simulating servo activation")
             time.sleep(1.0)
@@ -50,7 +37,7 @@ class BeaconDeployer:
         logging.info(f"Deploying beacon {beacon_id} for event {event_type}")
         
         self._activate_servo()
-        time.sleep(0.5)  # Wait for boot
+        time.sleep(0.5)  # Wait for mechanical drop
 
         ttl = 3600
         next_id = beacon_id + 1
@@ -74,5 +61,4 @@ class BeaconDeployer:
         return success
 
     def cleanup(self):
-        if self.pwm:
-            self.pwm.stop()
+        pass # GPIO cleanup is now handled strictly on the ESP32

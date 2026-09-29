@@ -1,11 +1,12 @@
 """
 Main Writer orchestrator — the entry point.
-Implements the complete Writer mission data flow.
+Implements the complete Writer mission data flow and ESP32 serial delegation.
 """
 import time
 import math
 import logging
 import argparse
+import serial
 
 try:
     from src.common.lora_interface import LoRaRadio
@@ -31,6 +32,18 @@ class WriterNode:
         self.pose = (0.0, 0.0, 0.0)  # x, y, theta
 
         logging.info("Initializing Writer subsystems...")
+        
+        # Initialize ESP32 Serial Link
+        try:
+            if not sim_mode:
+                self.esp = serial.Serial('/dev/ttyUSB0', 115200, timeout=1)
+                time.sleep(2) # Wait for ESP32 reboot
+                logging.info("ESP32 Serial Link Established.")
+            else:
+                self.esp = None
+        except Exception as e:
+            logging.error(f"ESP32 Connection failed: {e}")
+            self.esp = None
 
         if not sim_mode and LoRaRadio:
             self.radio = LoRaRadio(spi_bus=0, spi_device=0, ce_pin=LORA_CE0, rst_pin=LORA_RST, dio0_pin=LORA_DIO0)
@@ -52,7 +65,7 @@ class WriterNode:
             self.battery = BatteryMonitor(I2C_BUS, INA219_ADDR)
 
         self.lora = WriterLoRa(self.radio)
-        self.deployer = BeaconDeployer(self.lora, max_beacons=10)
+        self.deployer = BeaconDeployer(self.lora, self.send_esp_command, max_beacons=10)
         self.explorer = FrontierExplorer()
         self.detector = EventDetector()
         
@@ -62,6 +75,17 @@ class WriterNode:
         self.last_checkpoint_pos = (0.0, 0.0)
         self.current_beacon_id = 1
         self.current_event = None
+
+    def send_esp_command(self, cmd):
+        if not self.esp:
+            return
+        self.esp.write(f"{cmd}\n".encode('utf-8'))
+        while True:
+            if self.esp.in_waiting > 0:
+                resp = self.esp.readline().decode('utf-8').strip()
+                if resp == "ACK":
+                    break
+            time.sleep(0.05)
 
     def run(self):
         try:
@@ -99,7 +123,6 @@ class WriterNode:
         }
 
     def _explore_step(self):
-        # Simulated movement and lidar scan
         lidar_scan = [(0.0, 1.0)]
         self.pose = (self.pose[0] + 0.5, self.pose[1], 0.0)
         
@@ -115,13 +138,15 @@ class WriterNode:
             self.current_event = (event_type, confidence)
             self.state = "EVENT_HANDLING"
         elif dist_since_checkpoint >= BEACON_DROP_INTERVAL:
-            self.current_event = (0, 255)  # Checkpoint
+            self.current_event = (0, 255)  
             self.state = "EVENT_HANDLING"
         elif self.explorer.is_exploration_complete() or self.deployer.beacons_remaining <= 0:
             self.state = "RETURNING"
         else:
             wx, wy, wheading = self.explorer.get_next_waypoint()
             # Command motors to move towards (wx, wy)
+            if self.esp:
+                self.send_esp_command(f"DRIVE,{wx:.2f},{wy:.2f}")
 
     def _handle_event(self):
         event_type, confidence = self.current_event
@@ -137,18 +162,22 @@ class WriterNode:
 
     def _return_step(self):
         logging.info("Navigating back to ONA...")
-        time.sleep(2)  # Simulate navigation
+        if self.esp:
+            self.send_esp_command("DRIVE,0.0,0.0")
+        time.sleep(2)  
         self.state = "UPLOADING"
 
     def _upload_step(self):
         logging.info("Uploading map to ONA...")
-        time.sleep(1)  # Simulate upload
+        time.sleep(1)  
         logging.info("Upload complete.")
         self.state = "DONE"
 
     def cleanup(self):
         self.status.stop()
         self.deployer.cleanup()
+        if self.esp:
+            self.esp.close()
         logging.info("Cleanup complete.")
 
 if __name__ == '__main__':
