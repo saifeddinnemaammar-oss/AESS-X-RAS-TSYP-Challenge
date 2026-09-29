@@ -1,32 +1,16 @@
-﻿# Living Map - War-Zone Urban SAR
+# The Living Map: Autonomous Multi-Node Emergency Response
 
-**IEEE RAS x AESS Tunisia TSYPI4 Technical Challenge**
-
-## Problem
-In war-zone urban search and rescue, robots must explore GPS-denied, communication-denied collapsed buildings. When a robot fails, its knowledge is lost. We build a resilient spatial memory system using radio beacons and an Outside Network Area (ONA) to enable mission continuity.
-
-## System Overview
-- **Writer Robot:** Autonomous ground robot. Explores, detects events, drops beacons.
-- **Beacons:** Checkpoint and event beacons. Store what, where, when, TTL, confidence, next beacon ID.
-- **ONA:** Outside Network Area. Receives, translates local to GPS, carries to command post, briefs Executor.
-- **Executor Robot:** Ground robot. Receives mission from ONA, follows beacon chain, avoids hazards.
-- **Command Post:** Live map. Commander decides.
-
-## Event Types
-1. Human distress - thermal + audio + CO2.
-2. Fire/gas hazard - temperature + smoke + CO/VOC.
-
-## Architecture
-See docs/architecture.md for details.
-
-## Simulation
-Built with ROS2 Humble + Gazebo Classic.
+"The Living Map" is a decentralized, hardware-native robotics architecture designed for GPS-denied hazard environments. The system utilizes a dual-robot deployment strategy combined with a LoRa mesh network to map, verify, and neutralize environmental threats.
 
 ## Repository Structure
-- src/ - ROS2 packages for Writer, Executor, Beacons, ONA.
-- simulation/ - Gazebo worlds, models, launch files.
-- command_post/ - Dashboard for live map.
-- docs/ - Architecture, beacon schema, failure cases, implementation plan.
-- report/ - Technical report for Phase 1.
 
+The architecture is divided into distinct, hardware-specific environments to ensure lean microcontroller flashing and eliminate dependency conflicts.
 
+* **`/Writer_Robot`**: Dual-board (Raspberry Pi + ESP32) SLAM explorer. Maps the physical environment and physically deploys RF beacon breadcrumbs.
+* **`/ONA_Gateway`**: Dual-board (Raspberry Pi + ESP32) translation firewall. Validates incoming LoRa telemetry via CRC-16, translates local offsets to WGS84 coordinates, and briefs the Executor.
+* **`/Executor_Robot`**: Monolithic ESP32 actuator. Relies entirely on LiDAR obstacle avoidance, priority queuing, and RSSI homing to navigate to hazards and deploy physical countermeasures.
+* **`/Beacon_Node`**: Standalone ESP32 RF nodes. Provide visual RGB status indication and broadcast periodic homing pings for Executor navigation.
+* **`/Shared_Protocols`**: The unified 20-byte payload schemas and CCITT CRC-16 cryptographic logic ensuring cross-node synchronization.
+
+## Communication Protocol
+All nodes communicate via 868MHz LoRa using a strict 20-byte packet structure. The ONA Gateway acts as the central firewall, dropping any packets that fail the CRC-16 checksum before they reach the Command Post dashboard.
