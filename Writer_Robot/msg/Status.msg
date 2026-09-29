@@ -1,0 +1,6 @@
+float32 battery_voltage
+float32 battery_percent
+bool lidar_ok
+bool imu_ok
+bool lora_ok
+uint8 beacons_remaining

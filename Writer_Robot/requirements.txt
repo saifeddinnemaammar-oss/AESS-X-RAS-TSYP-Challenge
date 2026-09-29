@@ -3,3 +3,7 @@ spidev==3.6
 crcmod==1.7
 opencv-python-headless==4.8.1.78
 ultralytics==8.0.200
+adafruit-blinka==8.24.0
+adafruit-circuitpython-ina219==3.7.0
+adafruit-circuitpython-dht==3.7.8
+smbus2==0.4.3

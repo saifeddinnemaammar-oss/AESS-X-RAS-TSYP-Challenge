@@ -1,0 +1,10 @@
+uint16 beacon_id
+uint8 writer_id
+uint8 event_type
+float32 x
+float32 y
+float32 z
+builtin_interfaces/Time stamp
+uint16 ttl_seconds
+uint8 confidence
+uint16 next_beacon_id

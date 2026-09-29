@@ -1,0 +1,12 @@
+uint8 EVENT_CHECKPOINT=0
+uint8 EVENT_VICTIM=1
+uint8 EVENT_FIRE=2
+uint8 EVENT_GAS=3
+uint8 event_type
+float32 x
+float32 y
+float32 z
+float32 confidence
+builtin_interfaces/Time stamp
+uint16 ttl_seconds
+uint16 next_beacon_id
