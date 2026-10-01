@@ -1,15 +1,7 @@
-/*
-THE LIVING MAP: EXECUTOR ROBOT (ESP32 ONLY + LIDAR)
----------------------------------------------------
-Description: Eliminates the Pi and AI camera. Operates entirely via LoRa mesh briefings, 
-internal priority sorting, RPLiDAR obstacle avoidance, and RSSI homing.
-Dependencies: LoRa by Sandeep Mistry, ESP32Servo, RPLidar by RoboPeak
-*/
-
 #include <SPI.h>
 #include <LoRa.h>
 #include <ESP32Servo.h>
-#include <RPLidar.h> //
+#include <RPLidar.h>
 
 // --- PIN DEFINITIONS ---
 const int csPin = 5;
@@ -19,11 +11,9 @@ const int irqPin = 26;
 const int SERVO_PIN = 18;
 const int PUMP_RELAY_PIN = 19;
 
-// L298N Motor Driver
 const int ENA = 14; const int IN1 = 27; const int IN2 = 26;
 const int ENB = 32; const int IN3 = 25; const int IN4 = 33;
 
-// RPLiDAR on Serial2
 const int LIDAR_RX = 16;
 const int LIDAR_TX = 17;
 const int LIDAR_PWM = 21; 
@@ -31,13 +21,40 @@ const int LIDAR_PWM = 21;
 RPLidar lidar;
 Servo payloadServo;
 
+// --- 20-BYTE PACKET STRUCTURE ---
+struct __attribute__((packed)) BeaconPacket {
+  uint16_t beacon_id;
+  uint8_t writer_id;
+  uint8_t event_type; 
+  int16_t x;
+  int16_t y;
+  int8_t z;
+  uint32_t timestamp;
+  uint16_t ttl;
+  uint8_t confidence;
+  uint16_t previous_beacon;
+  uint16_t crc16;
+};
+
+// CRC16 implementation for data integrity
+uint16_t calculateCRC(uint8_t *data, size_t len) {
+  uint16_t crc = 0xFFFF;
+  for (size_t i = 0; i < len; i++) {
+    crc ^= data[i] << 8;
+    for (uint8_t j = 0; j < 8; j++) {
+      crc = (crc & 0x8000) ? (crc << 1) ^ 0x1021 : crc << 1;
+    }
+  }
+  return crc;
+}
+
 // --- STATE MACHINE ---
 enum SystemState { STATE_BOOT, STATE_BRIEFING, STATE_NAVIGATING, STATE_ACTING, STATE_DONE };
 SystemState currentState = STATE_BOOT;
 
 struct HazardTarget {
   uint8_t beacon_id;
-  uint8_t hazard_type; // 1=Victim, 2=Fire, 3=Gas
+  uint8_t hazard_type; 
   bool completed;
 };
 
@@ -48,19 +65,17 @@ int currentTargetIndex = -1;
 void setup() {
   Serial.begin(115200);
   
-  // Setup RPLiDAR on ESP32 Hardware Serial 2
+  // Setup RPLiDAR
   Serial2.begin(115200, SERIAL_8N1, LIDAR_RX, LIDAR_TX);
   lidar.begin(Serial2);
   pinMode(LIDAR_PWM, OUTPUT);
-  analogWrite(LIDAR_PWM, 255); // Start LiDAR motor
+  analogWrite(LIDAR_PWM, 255);
   
-  // Actuators
+  // Actuators & Motors
   payloadServo.attach(SERVO_PIN);
   payloadServo.write(90); 
   pinMode(PUMP_RELAY_PIN, OUTPUT);
   digitalWrite(PUMP_RELAY_PIN, LOW); 
-  
-  // Motors
   pinMode(ENA, OUTPUT); pinMode(IN1, OUTPUT); pinMode(IN2, OUTPUT);
   pinMode(ENB, OUTPUT); pinMode(IN3, OUTPUT); pinMode(IN4, OUTPUT);
   
@@ -71,7 +86,7 @@ void setup() {
     while (true);
   }
   
-  Serial.println("[SYS] Executor ESP32 Booted. Awaiting LoRa Briefing...");
+  Serial.println("[SYS] Executor Ready. Awaiting LoRa Briefing...");
   currentState = STATE_BRIEFING;
 }
 
@@ -80,23 +95,20 @@ void loop() {
     case STATE_BRIEFING:
       receiveMissionBriefing();
       break;
-      
     case STATE_NAVIGATING:
       if (selectNextPriorityTarget()) {
         homeToBeacon(missionTargets[currentTargetIndex].beacon_id);
       } else {
         Serial.println("[MISSION] All targets complete.");
-        analogWrite(LIDAR_PWM, 0); // Stop LiDAR
+        analogWrite(LIDAR_PWM, 0); 
         currentState = STATE_DONE;
       }
       break;
-      
     case STATE_ACTING:
       executeHardwareAction(missionTargets[currentTargetIndex].hazard_type);
       missionTargets[currentTargetIndex].completed = true;
       currentState = STATE_NAVIGATING;
       break;
-      
     case STATE_DONE:
       stopMotors();
       delay(1000);
@@ -104,29 +116,36 @@ void loop() {
   }
 }
 
-// --- MISSION & PRIORITY LOGIC ---
-
 void receiveMissionBriefing() {
   int packetSize = LoRa.parsePacket();
-  if (packetSize > 0) {
-    Serial.println("[NET] Mission Briefing Received.");
+  if (packetSize == sizeof(BeaconPacket)) {
+    BeaconPacket receivedPacket;
+    LoRa.readBytes((uint8_t*)&receivedPacket, sizeof(BeaconPacket));
     
-    // Hardcoded for demo: ONA sends Target 1 (Fire), Target 2 (Victim)
-    missionTargets[0] = {101, 2, false}; // Fire
-    missionTargets[1] = {102, 1, false}; // Victim
-    targetCount = 2;
-    
-    // Sort by priority: Victim (1) > Fire (2) > Gas (3)
-    for (int i = 0; i < targetCount - 1; i++) {
-      for (int j = i + 1; j < targetCount; j++) {
-        if (missionTargets[j].hazard_type < missionTargets[i].hazard_type) {
-          HazardTarget temp = missionTargets[i];
-          missionTargets[i] = missionTargets[j];
-          missionTargets[j] = temp;
+    // Verify CRC before accepting the mission
+    if (calculateCRC((uint8_t*)&receivedPacket, 18) == receivedPacket.crc16) {
+      Serial.println("[NET] Valid Mission Briefing Received.");
+      
+      // Dynamically load the target from the parsed packet
+      missionTargets[targetCount] = {
+        (uint8_t)receivedPacket.beacon_id, 
+        receivedPacket.event_type, 
+        false
+      };
+      targetCount++;
+      
+      // Sort array by priority (1 = Victim, 2 = Fire, 3 = Gas)
+      for (int i = 0; i < targetCount - 1; i++) {
+        for (int j = i + 1; j < targetCount; j++) {
+          if (missionTargets[j].hazard_type < missionTargets[i].hazard_type) {
+            HazardTarget temp = missionTargets[i];
+            missionTargets[i] = missionTargets[j];
+            missionTargets[j] = temp;
+          }
         }
       }
+      currentState = STATE_NAVIGATING;
     }
-    currentState = STATE_NAVIGATING;
   }
 }
 
@@ -140,31 +159,26 @@ bool selectNextPriorityTarget() {
   return false;
 }
 
-// --- NAVIGATION & HARDWARE ---
-
 void homeToBeacon(uint8_t target_id) {
   Serial.print("[NAV] Homing to Beacon: ");
   Serial.println(target_id);
   
-  // LiDAR Obstacle Avoidance + LoRa RSSI Homing
   unsigned long navStart = millis();
   while (millis() - navStart < 6000) {
     if (IS_OK(lidar.waitPoint())) {
-      float distance = lidar.getCurrentPoint().distance; // distance in mm
-      float angle = lidar.getCurrentPoint().angle; // angle in degrees
+      float distance = lidar.getCurrentPoint().distance;
+      float angle = lidar.getCurrentPoint().angle;
       
-      // If obstacle is within 400mm and in the front 90 degrees
       if (distance > 0 && distance < 400 && (angle < 45 || angle > 315)) {
         turnRight();
       } else {
-        // Path clear, follow RSSI signal gradient (simplified here as Forward)
         driveForward();
       }
     }
   }
   
   stopMotors();
-  Serial.println("[NAV] Arrived at Beacon.");
+  Serial.println("[NAV] Arrived at Target.");
   currentState = STATE_ACTING;
 }
 
