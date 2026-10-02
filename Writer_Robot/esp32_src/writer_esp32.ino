@@ -2,32 +2,33 @@
 #include <LoRa.h>
 #include <ESP32Servo.h>
 
-// --- HARDWARE PINS ---
-#define LORA_SS 18
-#define LORA_RST 14
-#define LORA_DIO0 26
-#define SERVO_PIN 12
+// --- PIN DEFINITIONS ---
+const int LORA_CS = 5;
+const int LORA_RST = 14;
+const int LORA_DIO0 = 26;
+const int SERVO_PIN = 18; // Controls the beacon magazine release
 
 Servo dropServo;
-uint16_t beaconCounter = 1;
 
 // --- 20-BYTE PACKET STRUCTURE ---
-// __attribute__((packed)) prevents the compiler from adding padding bytes
 struct __attribute__((packed)) BeaconPacket {
   uint16_t beacon_id;
-  uint8_t writer_id;
-  uint8_t event_type; 
-  int16_t x;
-  int16_t y;
-  int8_t z;
+  uint8_t  writer_id;
+  uint8_t  event_type; 
+  int16_t  x_cm;
+  int16_t  y_cm;
+  int8_t   z_dm;
   uint32_t timestamp;
-  uint16_t ttl;
-  uint8_t confidence;
+  uint16_t ttl_sec;
+  uint8_t  confidence;
   uint16_t previous_beacon;
   uint16_t crc16;
 };
 
-// Basic CRC16 implementation for data integrity
+uint16_t currentBeaconID = 100; // Starting ID for this mission
+uint16_t previousBeaconID = 0;
+const uint8_t WRITER_ID = 1;
+
 uint16_t calculateCRC(uint8_t *data, size_t len) {
   uint16_t crc = 0xFFFF;
   for (size_t i = 0; i < len; i++) {
@@ -42,61 +43,76 @@ uint16_t calculateCRC(uint8_t *data, size_t len) {
 void setup() {
   Serial.begin(115200);
   
-  // Initialize Servo
   dropServo.attach(SERVO_PIN);
   dropServo.write(0); // Locked position
-
-  // Initialize LoRa
-  LoRa.setPins(LORA_SS, LORA_RST, LORA_DIO0);
-  if (!LoRa.begin(868E6)) { // Set to 433E6 if using 433MHz Ra-02 modules
-    Serial.println("[ERR] LoRa init failed. Check wiring.");
+  
+  LoRa.setPins(LORA_CS, LORA_RST, LORA_DIO0);
+  if (!LoRa.begin(868E6)) {
+    Serial.println("[ERR] Writer LoRa init failed.");
     while (true);
   }
-  Serial.println("[SYS] ESP32 Ready. Awaiting AI triggers.");
+  
+  Serial.println("[SYS] Writer ESP32 Ready. Awaiting commands from Pi Vision AI...");
 }
 
 void loop() {
+  // Listen for the serial bridge command from the Pi's Python script
   if (Serial.available() > 0) {
-    String incoming = Serial.readStringUntil('\n');
+    String command = Serial.readStringUntil('\n');
+    command.trim();
     
-    // Expected format from Pi: "DROP_BEACON,1,85.5"
-    if (incoming.startsWith("DROP_BEACON")) {
-      Serial.println("[ACTUATOR] Releasing physical beacon...");
-      dropServo.write(90);
-      delay(1000);
-      dropServo.write(0);
+    if (command.startsWith("DROP_BEACON")) {
+      // Expected format: DROP_BEACON,<event_type>,<confidence>
+      // Example: DROP_BEACON,1,85.5
+      int firstComma = command.indexOf(',');
+      int secondComma = command.indexOf(',', firstComma + 1);
       
-      // Parse the confidence from the incoming serial string
-      int firstComma = incoming.indexOf(',');
-      int secondComma = incoming.indexOf(',', firstComma + 1);
-      float confidenceFloat = incoming.substring(secondComma + 1).toFloat();
-      
-      // Map confidence (0-100) to a single uint8_t byte (0-255)
-      uint8_t confidenceByte = (uint8_t)((confidenceFloat / 100.0) * 255.0);
-
-      // Construct the 20-byte packet
-      BeaconPacket packet;
-      packet.beacon_id = beaconCounter;
-      packet.writer_id = 1; // ID for this specific Writer Robot
-      packet.event_type = 1; // 1 = Victim
-      packet.x = 0; // TODO: Replace with real SLAM X coordinate 
-      packet.y = 0; // TODO: Replace with real SLAM Y coordinate
-      packet.z = 0; 
-      packet.timestamp = 0; // TODO: Sync with Pi's RTC timestamp
-      packet.ttl = 3600; // 1 hour TTL
-      packet.confidence = confidenceByte;
-      packet.previous_beacon = beaconCounter - 1;
-      
-      // Calculate CRC for the first 18 bytes and append it
-      packet.crc16 = calculateCRC((uint8_t*)&packet, 18);
-
-      // Broadcast via LoRa
-      LoRa.beginPacket();
-      LoRa.write((uint8_t*)&packet, sizeof(packet));
-      LoRa.endPacket();
-
-      Serial.println("[LoRa] 20-byte beacon packet broadcasted successfully.");
-      beaconCounter++;
+      if (firstComma > 0 && secondComma > 0) {
+        uint8_t event_type = command.substring(firstComma + 1, secondComma).toInt();
+        float conf_float = command.substring(secondComma + 1).toFloat();
+        uint8_t conf_byte = (uint8_t)((conf_float / 100.0) * 255.0); // Map 0-100% to 0-255
+        
+        deployBeacon(event_type, conf_byte);
+      }
     }
   }
+}
+
+void deployBeacon(uint8_t eventType, uint8_t confidenceMap) {
+  Serial.println("[ACT] Deploying Beacon physically...");
+  
+  // 1. Actuate the drop mechanism
+  dropServo.write(90); 
+  delay(500); // Allow gravity to pull the beacon out of the magnetic field
+  dropServo.write(0); 
+  delay(1000); // Wait for the beacon's ESP32 to boot via the MOSFET wake-up circuit
+
+  // 2. Construct the 20-byte payload
+  BeaconPacket packet;
+  packet.beacon_id = currentBeaconID;
+  packet.writer_id = WRITER_ID;
+  packet.event_type = eventType;
+  
+  // Simulated Odometry (In production, pull from ROS2 serial bridge)
+  packet.x_cm = 1500; 
+  packet.y_cm = 3200; 
+  packet.z_dm = 0;
+  
+  packet.timestamp = 1700000000 + (millis() / 1000); 
+  packet.ttl_sec = 3600; // 1 hour validity
+  packet.confidence = confidenceMap;
+  packet.previous_beacon = previousBeaconID;
+  
+  // 3. Calculate CRC over the first 18 bytes
+  packet.crc16 = calculateCRC((uint8_t*)&packet, 18);
+
+  // 4. Transmit configuration to the newly dropped beacon
+  Serial.println("[TX] Broadcasting configuration to dropped beacon...");
+  LoRa.beginPacket();
+  LoRa.write((uint8_t*)&packet, sizeof(BeaconPacket));
+  LoRa.endPacket();
+  
+  // 5. Update chain pointers
+  previousBeaconID = currentBeaconID;
+  currentBeaconID++;
 }
