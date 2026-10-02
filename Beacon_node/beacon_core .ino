@@ -6,8 +6,8 @@
 const int LORA_CS    = 5;
 const int LORA_RST   = 14;
 const int LORA_DIO0  = 26;
-
 const int LED_PIN    = 4;
+const int BUZZER_PIN = 12; // NEW: Loud piezoelectric buzzer
 const int NUM_PIXELS = 8; 
 
 Adafruit_NeoPixel strip(NUM_PIXELS, LED_PIN, NEO_GRB + NEO_KHZ800);
@@ -16,12 +16,12 @@ Adafruit_NeoPixel strip(NUM_PIXELS, LED_PIN, NEO_GRB + NEO_KHZ800);
 enum BeaconState {
   STATE_UNCONFIGURED,
   STATE_ACTIVE_BROADCAST,
-  STATE_RESOLVED
+  STATE_RESOLVED,
+  STATE_ALARM // NEW: Triggered if Executor fails to arrive
 };
 
 BeaconState currentState = STATE_UNCONFIGURED;
 
-// Strict 20-byte Little-Endian Struct (Matches System Architecture)
 struct __attribute__((packed)) BeaconPacket {
   uint16_t beacon_id;
   uint8_t  writer_id;
@@ -38,9 +38,12 @@ struct __attribute__((packed)) BeaconPacket {
 
 BeaconPacket activePayload;
 unsigned long lastPingTime = 0;
+unsigned long configuredTime = 0;
 const unsigned long PING_INTERVAL = 1500; 
 
-// --- HELPER FUNCTIONS ---
+// FMEA ALARM TIMEOUT: 60 seconds for demo (Set to ~15 minutes for real deployment)
+const unsigned long EXECUTOR_FAILURE_TIMEOUT = 60000; 
+
 uint16_t calculateCRC(uint8_t *data, size_t len) {
   uint16_t crc = 0xFFFF;
   for (size_t i = 0; i < len; i++) {
@@ -61,7 +64,7 @@ void setIndicatorColor(uint8_t r, uint8_t g, uint8_t b) {
 
 void applyEventColor(uint8_t event_type) {
   switch (event_type) {
-    case 0: setIndicatorColor(245, 158, 11); break; // Anchor: Amber
+    case 0: setIndicatorColor(245, 158, 11); break; // Checkpoint: Amber
     case 1: setIndicatorColor(6, 182, 212); break;  // Victim: Cyan
     case 2: setIndicatorColor(239, 68, 68); break;  // Fire: Red
     case 3: setIndicatorColor(168, 85, 247); break; // Gas: Purple
@@ -69,43 +72,53 @@ void applyEventColor(uint8_t event_type) {
   }
 }
 
+// NEW: Plays an auditory SOS pattern
+void triggerSOSAlarm() {
+  Serial.println("[ALARM] Executor failure detected! Sounding SOS.");
+  for(int i=0; i<3; i++) { tone(BUZZER_PIN, 1000, 200); delay(300); } // S
+  for(int i=0; i<3; i++) { tone(BUZZER_PIN, 1000, 600); delay(700); } // O
+  for(int i=0; i<3; i++) { tone(BUZZER_PIN, 1000, 200); delay(300); } // S
+  delay(1000);
+}
+
 void handleIncomingPacket(int packetSize) {
-  // Case 1: Initial configuration from Writer
   if (currentState == STATE_UNCONFIGURED && packetSize == sizeof(BeaconPacket)) {
     BeaconPacket tempPacket;
     LoRa.readBytes((uint8_t*)&tempPacket, sizeof(BeaconPacket));
     
-    // Verify CRC-16
     if (calculateCRC((uint8_t*)&tempPacket, 18) == tempPacket.crc16) {
       activePayload = tempPacket;
+      configuredTime = millis(); // Start the FMEA failure timer
       
-      Serial.print("[BEACON] Configured! Assigned ID: ");
+      Serial.print("[BEACON] Configured! ID: ");
       Serial.println(activePayload.beacon_id);
 
-      // Transmit ACK back to Writer
       LoRa.beginPacket();
       LoRa.print("ACK");
       LoRa.write(activePayload.beacon_id & 0xFF);
       LoRa.endPacket();
 
       applyEventColor(activePayload.event_type);
+      
+      // Gentle localization beep for victims upon deployment
+      if (activePayload.event_type == 1) tone(BUZZER_PIN, 800, 500); 
+      
       currentState = STATE_ACTIVE_BROADCAST;
       lastPingTime = millis();
-    } else {
-      Serial.println("[ERR] CRC-16 mismatch. Packet dropped.");
     }
   }
-  // Case 2: Status Resolution from Executor
   else if (currentState == STATE_ACTIVE_BROADCAST && packetSize >= 4) {
     uint8_t header = LoRa.read();
     if (header == 0xFF) {
       uint16_t targetID = (LoRa.read() << 8) | LoRa.read();
       uint8_t newStatus = LoRa.read();
 
+      // Executor successfully arrived and resolved the beacon
       if (targetID == activePayload.beacon_id && newStatus == 0) {
         Serial.println("[BEACON] Hazard resolved by Executor.");
         currentState = STATE_RESOLVED;
         setIndicatorColor(16, 185, 129); // Turn Green
+        noTone(BUZZER_PIN); // Silence any alarms
       }
     }
   }
@@ -113,10 +126,11 @@ void handleIncomingPacket(int packetSize) {
 
 void setup() {
   Serial.begin(115200);
-
+  
+  pinMode(BUZZER_PIN, OUTPUT);
   strip.begin();
   strip.setBrightness(80);
-  setIndicatorColor(20, 20, 20); // Dim white: Booting / Unconfigured
+  setIndicatorColor(20, 20, 20); 
 
   LoRa.setPins(LORA_CS, LORA_RST, LORA_DIO0);
   if (!LoRa.begin(868E6)) {
@@ -125,7 +139,7 @@ void setup() {
     while (true);
   }
 
-  Serial.println("[BEACON] Booted. Waiting for Writer configuration packet...");
+  Serial.println("[BEACON] Booted. Waiting for Writer configuration...");
 }
 
 void loop() {
@@ -134,15 +148,29 @@ void loop() {
     handleIncomingPacket(packetSize);
   }
 
-  // Periodic Broadcasting
   if (currentState == STATE_ACTIVE_BROADCAST) {
+    // FMEA CHECK: Did the Executor fail to arrive?
+    if (millis() - configuredTime > EXECUTOR_FAILURE_TIMEOUT && activePayload.event_type == 1) {
+      currentState = STATE_ALARM;
+      setIndicatorColor(255, 0, 0); // Flash Red for SOS
+      return;
+    }
+
     if (millis() - lastPingTime >= PING_INTERVAL) {
       LoRa.beginPacket();
       LoRa.write((uint8_t*)&activePayload, sizeof(BeaconPacket));
       LoRa.endPacket();
       
+      // Optional: Tiny beep sync'd with transmission if it's a victim
+      if (activePayload.event_type == 1) tone(BUZZER_PIN, 500, 50);
+
       Serial.println("[TX] Beacon pulsing...");
       lastPingTime = millis();
     }
+  }
+
+  // Execute continuous SOS alarm if system failed
+  if (currentState == STATE_ALARM) {
+    triggerSOSAlarm(); 
   }
 }
