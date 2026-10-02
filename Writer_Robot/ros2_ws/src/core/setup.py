@@ -16,7 +16,7 @@ setup(
     install_requires=['setuptools', 'pyserial'],
     zip_safe=True,
     maintainer='AESS-X-RAS',
-    maintainer_email='robotics@team.com',
+    maintainer_email='saifeddinne.maammar@ieee.org',
     description='ROS 2 package for The Living Map Writer Robot',
     license='Apache-2.0',
     tests_require=['pytest'],
