@@ -14,3 +14,13 @@ The architecture is divided into distinct, hardware-specific environments to ens
 
 ## Communication Protocol
 All nodes communicate via 868MHz LoRa using a strict 20-byte packet structure. The ONA Gateway acts as the central firewall, dropping any packets that fail the CRC-16 checksum before they reach the Command Post dashboard.
+
+## Deployment Instructions (Writer Robot)
+
+This repository contains our custom ROS 2 `core` package for odometry-to-ESP32 bridging. 
+
+**1. Install Dependencies**
+On the Writer Robot's Raspberry Pi 4 (Ubuntu 22.04), run the automated installation script to download ROS 2 Humble and the RPLiDAR drivers:
+```bash
+chmod +x install_ros2_pi.sh
+./install_ros2_pi.sh
