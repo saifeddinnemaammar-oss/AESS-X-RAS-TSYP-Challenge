@@ -56,10 +56,10 @@ stateDiagram-v2
 ## ONA Processing Pipeline
 ```mermaid
 flowchart LR
-    RF_Ingest[RF Ingest] --> Firewall[Firewall (CRC check)]
-    Firewall --> Translate[Translate (ENU to GPS)]
-    Translate --> Uplink{Link Up?}
-    Uplink -->|Yes| Push[Push to Command Post]
-    Uplink -->|No| Store[Store & Forward Queue]
+    RF_Ingest["RF Ingest"] --> Firewall["Firewall (CRC check)"]
+    Firewall --> Translate["Translate (ENU to GPS)"]
+    Translate --> Uplink{"Link Up?"}
+    Uplink -->|Yes| Push["Push to Command Post"]
+    Uplink -->|No| Store["Store & Forward Queue"]
     Store --> Push
 ```
