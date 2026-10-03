@@ -1,14 +1,27 @@
 #include <SPI.h>
 #include <LoRa.h>
 #include <ESP32Servo.h>
+#include <Wire.h>
+#include <Adafruit_MLX90640.h>
 
 // --- PIN DEFINITIONS ---
 const int LORA_CS = 5;
 const int LORA_RST = 14;
 const int LORA_DIO0 = 26;
 const int SERVO_PIN = 18; // Controls the beacon magazine release
+const int MQ_GAS_PIN = 34; // Analog pin for MQ2/MQ7 gas sensor
 
 Servo dropServo;
+Adafruit_MLX90640 mlx;
+float frame[32*24]; // 768 pixels for thermal array
+
+// --- SENSOR THRESHOLDS ---
+const float THERMAL_FIRE = 80.0;
+const float THERMAL_VICTIM = 32.0;
+const int GAS_HAZARD_THRESHOLD = 2000; // Calibrate to specific analog voltage
+
+unsigned long lastSensorPoll = 0;
+const unsigned long POLL_INTERVAL = 1000; // Poll sensors every 1 second
 
 // --- 20-BYTE PACKET STRUCTURE ---
 struct __attribute__((packed)) BeaconPacket {
@@ -25,7 +38,7 @@ struct __attribute__((packed)) BeaconPacket {
   uint16_t crc16;
 };
 
-uint16_t currentBeaconID = 100; // Starting ID for this mission
+uint16_t currentBeaconID = 100;
 uint16_t previousBeaconID = 0;
 const uint8_t WRITER_ID = 1;
 
@@ -43,34 +56,72 @@ uint16_t calculateCRC(uint8_t *data, size_t len) {
 void setup() {
   Serial.begin(115200);
   
+  // Initialize Servo
   dropServo.attach(SERVO_PIN);
   dropServo.write(0); // Locked position
   
+  // Initialize LoRa
   LoRa.setPins(LORA_CS, LORA_RST, LORA_DIO0);
   if (!LoRa.begin(868E6)) {
     Serial.println("[ERR] Writer LoRa init failed.");
     while (true);
   }
   
-  Serial.println("[SYS] Writer ESP32 Ready. Awaiting commands from Pi Vision AI...");
+  // Initialize Thermal Camera (I2C Pins 21/22)
+  Wire.begin(21, 22); 
+  if (!mlx.begin(MLX90640_I2CADDR_DEFAULT, &Wire)) {
+    Serial.println("[ERR] Thermal camera not found. Check wiring.");
+    while (1) delay(10);
+  }
+  mlx.setMode(MLX90640_CHESS);
+  mlx.setResolution(MLX90640_ADC_18BIT);
+  mlx.setRefreshRate(MLX90640_4_HZ);
+  
+  pinMode(MQ_GAS_PIN, INPUT);
+  
+  Serial.println("[SYS] Writer ESP32 Ready. Sensor Polling Active.");
 }
 
 void loop() {
-  // Listen for the serial bridge command from the Pi's Python script
+  // 1. NON-BLOCKING SENSOR FUSION POLLING
+  if (millis() - lastSensorPoll > POLL_INTERVAL) {
+    lastSensorPoll = millis();
+    
+    // Check Gas
+    int gasLevel = analogRead(MQ_GAS_PIN);
+    if (gasLevel > GAS_HAZARD_THRESHOLD) {
+      Serial.println("GAS_DETECTED"); // Send trigger to Pi
+    }
+    
+    // Check Thermal
+    if (mlx.getFrame(frame) == 0) {
+      float max_temp = -100.0;
+      for (uint16_t h = 0; h < 768; h++) {
+        if (frame[h] > max_temp) max_temp = frame[h];
+      }
+      
+      if (max_temp > THERMAL_FIRE) {
+        Serial.println("THERMAL_SPIKE_FIRE");
+      } else if (max_temp > THERMAL_VICTIM && max_temp < 45.0) {
+        Serial.println("THERMAL_SPIKE"); // Send trigger to Pi to wake YOLOv8
+      }
+    }
+  }
+
+  // 2. LISTEN FOR DEPLOYMENT COMMANDS FROM RASPBERRY PI
   if (Serial.available() > 0) {
     String command = Serial.readStringUntil('\n');
     command.trim();
     
     if (command.startsWith("DROP_BEACON")) {
       // Expected format: DROP_BEACON,<event_type>,<confidence>
-      // Example: DROP_BEACON,1,85.5
       int firstComma = command.indexOf(',');
       int secondComma = command.indexOf(',', firstComma + 1);
       
       if (firstComma > 0 && secondComma > 0) {
         uint8_t event_type = command.substring(firstComma + 1, secondComma).toInt();
         float conf_float = command.substring(secondComma + 1).toFloat();
-        uint8_t conf_byte = (uint8_t)((conf_float / 100.0) * 255.0); // Map 0-100% to 0-255
+        uint8_t conf_byte = (uint8_t)((conf_float / 100.0) * 255.0); 
         
         deployBeacon(event_type, conf_byte);
       }
@@ -81,38 +132,33 @@ void loop() {
 void deployBeacon(uint8_t eventType, uint8_t confidenceMap) {
   Serial.println("[ACT] Deploying Beacon physically...");
   
-  // 1. Actuate the drop mechanism
   dropServo.write(90); 
-  delay(500); // Allow gravity to pull the beacon out of the magnetic field
+  delay(500); 
   dropServo.write(0); 
-  delay(1000); // Wait for the beacon's ESP32 to boot via the MOSFET wake-up circuit
+  delay(1000); 
 
-  // 2. Construct the 20-byte payload
   BeaconPacket packet;
   packet.beacon_id = currentBeaconID;
   packet.writer_id = WRITER_ID;
   packet.event_type = eventType;
   
-  // Simulated Odometry (In production, pull from ROS2 serial bridge)
+  // Simulated Odometry
   packet.x_cm = 1500; 
   packet.y_cm = 3200; 
   packet.z_dm = 0;
   
   packet.timestamp = 1700000000 + (millis() / 1000); 
-  packet.ttl_sec = 3600; // 1 hour validity
+  packet.ttl_sec = 3600; 
   packet.confidence = confidenceMap;
   packet.previous_beacon = previousBeaconID;
   
-  // 3. Calculate CRC over the first 18 bytes
   packet.crc16 = calculateCRC((uint8_t*)&packet, 18);
 
-  // 4. Transmit configuration to the newly dropped beacon
   Serial.println("[TX] Broadcasting configuration to dropped beacon...");
   LoRa.beginPacket();
   LoRa.write((uint8_t*)&packet, sizeof(BeaconPacket));
   LoRa.endPacket();
   
-  // 5. Update chain pointers
   previousBeaconID = currentBeaconID;
   currentBeaconID++;
 }

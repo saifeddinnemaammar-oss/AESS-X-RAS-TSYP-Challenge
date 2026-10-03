@@ -1,8 +1,8 @@
 """
-ONA Gateway Configuration (Modified for ESP32 UART Firewall)
+ONA Gateway Configuration (ESP32 UART Firewall Edition)
 """
 
-# ESP32 RF Firewall settings
+# ESP32 RF Firewall settings (Matches lora_ingest.py)
 ESP32_PORT = "/dev/ttyUSB0"
 ESP32_BAUDRATE = 115200
 
@@ -21,7 +21,7 @@ MQTT_TOPIC_MISSIONS = "living_map/missions"
 UPLINK_MODE = "MQTT" # or "HTTP"
 HTTP_UPLINK_URL = "http://localhost:8080/api/ingest"
 
-# Default anchor
+# Default anchor (Used if GPS fails)
 DEFAULT_LAT0 = 34.7398
 DEFAULT_LON0 = 10.7600
 DEFAULT_ALT0 = 15.0

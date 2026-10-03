@@ -1,41 +1,60 @@
-"""
-Writer-specific configuration parameters.
-Defines IDs, SPI/GPIO pins, thresholds, and operational constraints.
-"""
+import serial
+import time
+import logging
+from vision_ai import VisionAI
+from beacon_deployer import BeaconDeployer
 
-WRITER_ID = 1
+logging.basicConfig(level=logging.INFO)
 
-# LoRa SX1276 (SPI0)
-LORA_CE0 = 8
-LORA_RST = 22
-LORA_DIO0 = 25
+def main():
+    # 1. Initialize hardware connections
+    esp32_port = '/dev/ttyUSB0'  # Adjust to your Pi's actual USB port
+    baud_rate = 115200
+    
+    try:
+        esp_serial = serial.Serial(esp32_port, baud_rate, timeout=1)
+        logging.info(f"[SYS] Connected to ESP32 on {esp32_port}")
+    except Exception as e:
+        logging.error(f"[ERR] ESP32 not found: {e}")
+        return
 
-# I2C Addresses
-I2C_BUS = 1
-INA219_ADDR = 0x40
-MPU9250_ADDR = 0x68
-MLX90640_ADDR = 0x33
+    # 2. Initialize subsystems
+    vision = VisionAI()
+    deployer = BeaconDeployer(serial_conn=esp_serial)
 
-# GPIO Pins
-DHT11_PIN = 4
-SERVO_PIN = 18
+    logging.info("[SYS] Writer Robot Master Node Active. Listening for ESP32 Interrupts...")
 
-# SPI ADC (MCP3008)
-ADC_SPI_BUS = 0
-ADC_SPI_DEVICE = 1
-MQ2_CHANNEL = 0
-MQ7_CHANNEL = 1
+    try:
+        while True:
+            if esp_serial.in_waiting > 0:
+                # Read incoming alerts from the ESP32 (Thermal, Gas, etc.)
+                incoming_msg = esp_serial.readline().decode('utf-8').strip()
+                
+                if "THERMAL_SPIKE" in incoming_msg:
+                    logger.info("[RX] ESP32 detected heat anomaly. Triggering AI Vision...")
+                    
+                    # Sensor Fusion: Hardware says HOT, now ask AI to confirm it's a HUMAN
+                    victim_found, conf = vision.scan_for_victim(timeout=3.0)
+                    
+                    if victim_found:
+                        # Event Type 1 = Victim
+                        deployer.deploy_beacon(event_type=1, confidence=conf)
+                        time.sleep(5) # Cooldown while beacon drops
+                        
+                elif "GAS_DETECTED" in incoming_msg:
+                    # Gas doesn't need visual confirmation, drop immediately
+                    logger.info("[RX] ESP32 detected Gas. Deploying beacon...")
+                    # Event Type 3 = Gas
+                    deployer.deploy_beacon(event_type=3, confidence=99.0)
+                    time.sleep(5)
+                    
+            time.sleep(0.1)
 
-# Sensor Thresholds
-THERMAL_VICTIM = 34.0
-THERMAL_FIRE = 55.0
-CO2_VICTIM = 1000.0
-GAS_HAZARD = 500.0
+    except KeyboardInterrupt:
+        logging.info("[SYS] Shutting down...")
+    finally:
+        vision.close()
+        esp_serial.close()
 
-# Exploration Params
-MAX_FRONTIER_DIST = 10.0  # meters
-BEACON_DROP_INTERVAL = 5.0  # meters
-
-# Battery Thresholds
-BATT_LOW = 20.0
-BATT_CRITICAL = 10.0
+if __name__ == '__main__':
+    main()

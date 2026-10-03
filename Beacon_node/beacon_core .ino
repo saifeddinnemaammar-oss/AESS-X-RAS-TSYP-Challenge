@@ -7,7 +7,7 @@ const int LORA_CS    = 5;
 const int LORA_RST   = 14;
 const int LORA_DIO0  = 26;
 const int LED_PIN    = 4;
-const int BUZZER_PIN = 12; // NEW: Loud piezoelectric buzzer
+const int BUZZER_PIN = 12; // Loud piezoelectric buzzer
 const int NUM_PIXELS = 8; 
 
 Adafruit_NeoPixel strip(NUM_PIXELS, LED_PIN, NEO_GRB + NEO_KHZ800);
@@ -17,7 +17,7 @@ enum BeaconState {
   STATE_UNCONFIGURED,
   STATE_ACTIVE_BROADCAST,
   STATE_RESOLVED,
-  STATE_ALARM // NEW: Triggered if Executor fails to arrive
+  STATE_ALARM 
 };
 
 BeaconState currentState = STATE_UNCONFIGURED;
@@ -39,10 +39,13 @@ struct __attribute__((packed)) BeaconPacket {
 BeaconPacket activePayload;
 unsigned long lastPingTime = 0;
 unsigned long configuredTime = 0;
-const unsigned long PING_INTERVAL = 1500; 
 
-// FMEA ALARM TIMEOUT: 60 seconds for demo (Set to ~15 minutes for real deployment)
-const unsigned long EXECUTOR_FAILURE_TIMEOUT = 60000; 
+// --- ALOHA RANDOMIZATION ---
+const unsigned long BASE_PING_INTERVAL = 3000; // Nominal 3s delay
+unsigned long currentRandomInterval = 3000;    // Will fluctuate +/- 500ms
+
+// FMEA ALARM TIMEOUT: 15 minutes (match report)
+const unsigned long EXECUTOR_FAILURE_TIMEOUT = 900000; 
 
 uint16_t calculateCRC(uint8_t *data, size_t len) {
   uint16_t crc = 0xFFFF;
@@ -72,7 +75,7 @@ void applyEventColor(uint8_t event_type) {
   }
 }
 
-// NEW: Plays an auditory SOS pattern
+// Plays an auditory SOS pattern
 void triggerSOSAlarm() {
   Serial.println("[ALARM] Executor failure detected! Sounding SOS.");
   for(int i=0; i<3; i++) { tone(BUZZER_PIN, 1000, 200); delay(300); } // S
@@ -88,7 +91,7 @@ void handleIncomingPacket(int packetSize) {
     
     if (calculateCRC((uint8_t*)&tempPacket, 18) == tempPacket.crc16) {
       activePayload = tempPacket;
-      configuredTime = millis(); // Start the FMEA failure timer
+      configuredTime = millis(); 
       
       Serial.print("[BEACON] Configured! ID: ");
       Serial.println(activePayload.beacon_id);
@@ -100,7 +103,6 @@ void handleIncomingPacket(int packetSize) {
 
       applyEventColor(activePayload.event_type);
       
-      // Gentle localization beep for victims upon deployment
       if (activePayload.event_type == 1) tone(BUZZER_PIN, 800, 500); 
       
       currentState = STATE_ACTIVE_BROADCAST;
@@ -113,12 +115,11 @@ void handleIncomingPacket(int packetSize) {
       uint16_t targetID = (LoRa.read() << 8) | LoRa.read();
       uint8_t newStatus = LoRa.read();
 
-      // Executor successfully arrived and resolved the beacon
       if (targetID == activePayload.beacon_id && newStatus == 0) {
         Serial.println("[BEACON] Hazard resolved by Executor.");
         currentState = STATE_RESOLVED;
         setIndicatorColor(16, 185, 129); // Turn Green
-        noTone(BUZZER_PIN); // Silence any alarms
+        noTone(BUZZER_PIN); 
       }
     }
   }
@@ -139,6 +140,9 @@ void setup() {
     while (true);
   }
 
+  // Seed the random number generator using analog noise
+  randomSeed(analogRead(0));
+
   Serial.println("[BEACON] Booted. Waiting for Writer configuration...");
 }
 
@@ -152,24 +156,27 @@ void loop() {
     // FMEA CHECK: Did the Executor fail to arrive?
     if (millis() - configuredTime > EXECUTOR_FAILURE_TIMEOUT && activePayload.event_type == 1) {
       currentState = STATE_ALARM;
-      setIndicatorColor(255, 0, 0); // Flash Red for SOS
+      setIndicatorColor(255, 0, 0); 
       return;
     }
 
-    if (millis() - lastPingTime >= PING_INTERVAL) {
+    if (millis() - lastPingTime >= currentRandomInterval) {
       LoRa.beginPacket();
       LoRa.write((uint8_t*)&activePayload, sizeof(BeaconPacket));
       LoRa.endPacket();
       
-      // Optional: Tiny beep sync'd with transmission if it's a victim
       if (activePayload.event_type == 1) tone(BUZZER_PIN, 500, 50);
 
-      Serial.println("[TX] Beacon pulsing...");
+      Serial.print("[TX] Beacon pulsing. Next pulse in ");
+      Serial.print(currentRandomInterval);
+      Serial.println(" ms");
+
       lastPingTime = millis();
+      // Generate the ALOHA Jitter for the NEXT transmission (+/- 500ms)
+      currentRandomInterval = BASE_PING_INTERVAL + random(-500, 501); 
     }
   }
 
-  // Execute continuous SOS alarm if system failed
   if (currentState == STATE_ALARM) {
     triggerSOSAlarm(); 
   }
