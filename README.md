@@ -8,6 +8,7 @@ A decentralized, hardware-native robotics architecture designed for GPS-denied U
 
 The architecture is strictly segmented across four physical nodes:
 
+<<<<<<< HEAD
 ### 1. `/Writer_Robot` (Dual-Board: Pi 4 + ESP32)
 The vanguard of the system.
 * **Raspberry Pi 4 (`pi_src/`):** Runs ROS 2 Humble and BreezySLAM for exploration. It hosts an INT8 quantized **YOLOv8 Nano** model to visually identify victims and fire hazards in the rubble.
@@ -30,3 +31,17 @@ The physical breadcrumbs.
 * Powered by an 18650 Li-ion cell with a zero-draw magnetic reed-switch wake-up.
 * Transmits the unified 20-byte `BeaconPacket` (Type, Coordinates, TTL, Confidence, CRC-16) every 3 seconds using ALOHA-based temporal randomization to prevent packet collision.
 * Features a hardware watchdog that triggers a piezoelectric SOS alarm if the Executor fails to arrive before the Time-To-Live expires.
+=======
+## Communication Protocol
+All nodes communicate via 868MHz LoRa using a strict 20-byte packet structure. The ONA Gateway acts as the central firewall, dropping any packets that fail the CRC-16 checksum before they reach the Command Post dashboard.
+
+## Deployment Instructions (Writer Robot)
+
+This repository contains our custom ROS 2 `core` package for odometry-to-ESP32 bridging. 
+
+**1. Install Dependencies**
+On the Writer Robot's Raspberry Pi 4 (Ubuntu 22.04), run the automated installation script to download ROS 2 Humble and the RPLiDAR drivers:
+```bash
+chmod +x install_ros2_pi.sh
+./install_ros2_pi.sh
+>>>>>>> 98ee672931d874afb57375a8082e864c387e75ee
