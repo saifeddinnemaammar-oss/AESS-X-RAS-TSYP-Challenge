@@ -8,7 +8,7 @@ import os
 import logging
 
 class StoreForwardQueue:
-    def __init__(self, db_path="/var/lib/living_map/queue.db"):
+    def __init__(self, db_path="/var/lib/nabad/queue.db"):
         self.db_path = db_path
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         self.lock = threading.Lock()

@@ -13,9 +13,9 @@ GPS_BAUDRATE = 9600
 # MQTT settings
 MQTT_HOST = "127.0.0.1" 
 MQTT_PORT = 1883
-MQTT_TOPIC_BEACONS = "living_map/beacons"
-MQTT_TOPIC_TELEMETRY = "living_map/telemetry"
-MQTT_TOPIC_MISSIONS = "living_map/missions"
+MQTT_TOPIC_BEACONS = "nabad/beacons"
+MQTT_TOPIC_TELEMETRY = "nabad/telemetry"
+MQTT_TOPIC_MISSIONS = "nabad/missions"
 
 # Uplink Mode
 UPLINK_MODE = "MQTT" # or "HTTP"
@@ -29,6 +29,6 @@ DEFAULT_ALT0 = 15.0
 R_EARTH = 6378137.0
 MAX_PACKETS_PER_SEC = 10
 
-STORE_FORWARD_DB = "/var/lib/living_map/queue.db"
-MISSION_STORAGE = "/var/lib/living_map/missions"
-LOG_FILE = "/var/log/living_map/ona_gateway.log"
+STORE_FORWARD_DB = "/var/lib/nabad/queue.db"
+MISSION_STORAGE = "/var/lib/nabad/missions"
+LOG_FILE = "/var/log/nabad/ona_gateway.log"

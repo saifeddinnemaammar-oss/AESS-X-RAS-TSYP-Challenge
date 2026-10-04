@@ -87,10 +87,10 @@ class UplinkManager:
             return False
 
     def publish_beacon(self, beacon_json: dict):
-        self._publish("living_map/beacons", beacon_json)
+        self._publish("nabad/beacons", beacon_json)
 
     def publish_telemetry(self, telemetry_json: dict):
-        self._publish("living_map/telemetry", telemetry_json)
+        self._publish("nabad/telemetry", telemetry_json)
 
     def publish_mission_status(self, status_json: dict):
-        self._publish("living_map/missions", status_json)
+        self._publish("nabad/missions", status_json)

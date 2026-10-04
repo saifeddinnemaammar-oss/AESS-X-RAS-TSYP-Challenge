@@ -1,6 +1,6 @@
-# The Living Map: Autonomous Multi-Node Emergency Response
+# Project Nabad (نبض): Autonomous Multi-Node Emergency Response
 
-A decentralized, hardware-native robotics architecture designed for GPS-denied hazard environments. This system utilizes a dual-robot deployment strategy combined with a custom LoRa mesh network to map, verify, and neutralize environmental threats.
+Nabad (نبض) is a decentralized, hardware-native robotics architecture designed for GPS-denied hazard environments. This system utilizes a dual-robot deployment strategy combined with a custom LoRa mesh network to map, verify, and neutralize environmental threats.
 
 ## Repository Structure
 
