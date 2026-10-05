@@ -46,9 +46,10 @@ void loop() {
       packet[i++] = LoRa.read();
     }
 
-    // CRC Validation (Assuming last 2 bytes are CRC)
+    // CRC Validation 
     if (packetSize >= 4) {
-      uint16_t receivedCRC = (packet[packetSize - 2] << 8) | packet[packetSize - 1];
+      // CRITICAL FIX: ESP32 structs are transmitted Little-Endian (LSB first)
+      uint16_t receivedCRC = packet[packetSize - 2] | (packet[packetSize - 1] << 8);
       uint16_t calculatedCRC = calculateCRC16(packet, packetSize - 2);
 
       if (receivedCRC == calculatedCRC) {
@@ -73,8 +74,8 @@ void loop() {
       int len = hexStr.length() / 2;
       
       LoRa.beginPacket();
-      for (int i = 0; i < len; i++) {
-        String byteStr = hexStr.substring(i * 2, i * 2 + 2);
+      for (int j = 0; j < len; j++) {
+        String byteStr = hexStr.substring(j * 2, j * 2 + 2);
         LoRa.write((uint8_t) strtol(byteStr.c_str(), NULL, 16));
       }
       LoRa.endPacket();

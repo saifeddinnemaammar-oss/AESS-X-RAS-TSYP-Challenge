@@ -1,10 +1,10 @@
 uint16 beacon_id
 uint8 writer_id
 uint8 event_type
-float32 x
-float32 y
-float32 z
-builtin_interfaces/Time stamp
+int16 x_cm
+int16 y_cm
+int8 z_cm
+uint32 timestamp
 uint16 ttl_seconds
 uint8 confidence
-uint16 next_beacon_id
+uint16 previous_beacon_id

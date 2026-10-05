@@ -31,7 +31,7 @@ def main():
                 incoming_msg = esp_serial.readline().decode('utf-8').strip()
                 
                 if "THERMAL_SPIKE" in incoming_msg:
-                    logger.info("[RX] ESP32 detected heat anomaly. Triggering AI Vision...")
+                    logging.info("[RX] ESP32 detected heat anomaly. Triggering AI Vision...")
                     
                     # Sensor Fusion: Hardware says HOT, now ask AI to confirm it's a HUMAN
                     victim_found, conf = vision.scan_for_victim(timeout=3.0)
@@ -43,7 +43,7 @@ def main():
                         
                 elif "GAS_DETECTED" in incoming_msg:
                     # Gas doesn't need visual confirmation, drop immediately
-                    logger.info("[RX] ESP32 detected Gas. Deploying beacon...")
+                    logging.info("[RX] ESP32 detected Gas. Deploying beacon...")
                     # Event Type 3 = Gas
                     deployer.deploy_beacon(event_type=3, confidence=99.0)
                     time.sleep(5)

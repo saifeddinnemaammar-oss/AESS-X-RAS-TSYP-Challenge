@@ -8,20 +8,20 @@
 const int LORA_CS = 5;
 const int LORA_RST = 14;
 const int LORA_DIO0 = 26;
-const int SERVO_PIN = 18; // Controls the beacon magazine release
-const int MQ_GAS_PIN = 34; // Analog pin for MQ2/MQ7 gas sensor
+const int SERVO_PIN = 18; 
+const int MQ_GAS_PIN = 34; 
 
 Servo dropServo;
 Adafruit_MLX90640 mlx;
-float frame[32*24]; // 768 pixels for thermal array
+float frame[32*24]; 
 
 // --- SENSOR THRESHOLDS ---
 const float THERMAL_FIRE = 80.0;
 const float THERMAL_VICTIM = 32.0;
-const int GAS_HAZARD_THRESHOLD = 2000; // Calibrate to specific analog voltage
+const int GAS_HAZARD_THRESHOLD = 2000; 
 
 unsigned long lastSensorPoll = 0;
-const unsigned long POLL_INTERVAL = 1000; // Poll sensors every 1 second
+const unsigned long POLL_INTERVAL = 1000; 
 
 // --- 20-BYTE PACKET STRUCTURE ---
 struct __attribute__((packed)) BeaconPacket {
@@ -39,7 +39,6 @@ struct __attribute__((packed)) BeaconPacket {
 };
 
 uint16_t currentBeaconID = 100;
-uint16_t previousBeaconID = 0;
 const uint8_t WRITER_ID = 1;
 
 uint16_t calculateCRC(uint8_t *data, size_t len) {
@@ -56,21 +55,18 @@ uint16_t calculateCRC(uint8_t *data, size_t len) {
 void setup() {
   Serial.begin(115200);
   
-  // Initialize Servo
   dropServo.attach(SERVO_PIN);
-  dropServo.write(0); // Locked position
+  dropServo.write(0); 
   
-  // Initialize LoRa
   LoRa.setPins(LORA_CS, LORA_RST, LORA_DIO0);
   if (!LoRa.begin(868E6)) {
     Serial.println("[ERR] Writer LoRa init failed.");
     while (true);
   }
   
-  // Initialize Thermal Camera (I2C Pins 21/22)
   Wire.begin(21, 22); 
   if (!mlx.begin(MLX90640_I2CADDR_DEFAULT, &Wire)) {
-    Serial.println("[ERR] Thermal camera not found. Check wiring.");
+    Serial.println("[ERR] Thermal camera not found.");
     while (1) delay(10);
   }
   mlx.setMode(MLX90640_CHESS);
@@ -87,13 +83,11 @@ void loop() {
   if (millis() - lastSensorPoll > POLL_INTERVAL) {
     lastSensorPoll = millis();
     
-    // Check Gas
     int gasLevel = analogRead(MQ_GAS_PIN);
     if (gasLevel > GAS_HAZARD_THRESHOLD) {
-      Serial.println("GAS_DETECTED"); // Send trigger to Pi
+      Serial.println("GAS_DETECTED"); 
     }
     
-    // Check Thermal
     if (mlx.getFrame(frame) == 0) {
       float max_temp = -100.0;
       for (uint16_t h = 0; h < 768; h++) {
@@ -103,7 +97,7 @@ void loop() {
       if (max_temp > THERMAL_FIRE) {
         Serial.println("THERMAL_SPIKE_FIRE");
       } else if (max_temp > THERMAL_VICTIM && max_temp < 45.0) {
-        Serial.println("THERMAL_SPIKE"); // Send trigger to Pi to wake YOLOv8
+        Serial.println("THERMAL_SPIKE"); 
       }
     }
   }
@@ -114,22 +108,25 @@ void loop() {
     command.trim();
     
     if (command.startsWith("DROP_BEACON")) {
-      // Expected format: DROP_BEACON,<event_type>,<confidence>
+      // NEW FORMAT: DROP_BEACON,<event_type>,<confidence>,<previous_beacon>
       int firstComma = command.indexOf(',');
       int secondComma = command.indexOf(',', firstComma + 1);
+      int thirdComma = command.indexOf(',', secondComma + 1);
       
-      if (firstComma > 0 && secondComma > 0) {
+      if (firstComma > 0 && secondComma > 0 && thirdComma > 0) {
         uint8_t event_type = command.substring(firstComma + 1, secondComma).toInt();
-        float conf_float = command.substring(secondComma + 1).toFloat();
+        float conf_float = command.substring(secondComma + 1, thirdComma).toFloat();
+        uint16_t prev_beacon = command.substring(thirdComma + 1).toInt();
+        
         uint8_t conf_byte = (uint8_t)((conf_float / 100.0) * 255.0); 
         
-        deployBeacon(event_type, conf_byte);
+        deployBeacon(event_type, conf_byte, prev_beacon);
       }
     }
   }
 }
 
-void deployBeacon(uint8_t eventType, uint8_t confidenceMap) {
+void deployBeacon(uint8_t eventType, uint8_t confidenceMap, uint16_t previousBeacon) {
   Serial.println("[ACT] Deploying Beacon physically...");
   
   dropServo.write(90); 
@@ -150,7 +147,7 @@ void deployBeacon(uint8_t eventType, uint8_t confidenceMap) {
   packet.timestamp = 1700000000 + (millis() / 1000); 
   packet.ttl_sec = 3600; 
   packet.confidence = confidenceMap;
-  packet.previous_beacon = previousBeaconID;
+  packet.previous_beacon = previousBeacon; // Set by ROS 2 SLAM
   
   packet.crc16 = calculateCRC((uint8_t*)&packet, 18);
 
@@ -159,6 +156,5 @@ void deployBeacon(uint8_t eventType, uint8_t confidenceMap) {
   LoRa.write((uint8_t*)&packet, sizeof(BeaconPacket));
   LoRa.endPacket();
   
-  previousBeaconID = currentBeaconID;
   currentBeaconID++;
 }

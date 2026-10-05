@@ -19,11 +19,16 @@ class CoordinateTranslator:
         if self.lat0 is None or self.lon0 is None or self.alt0 is None:
             raise ValueError("Anchor not set")
             
+        # Convert local centimeters to meters
         x_e = x_cm / 100.0
         y_n = y_cm / 100.0
         z_u = z_cm / 100.0
         
+        # Calculate coordinate offsets in degrees
+        # Latitude: 1 meter = 1 / R_EARTH radians
         delta_lat = (y_n / self.r_earth) * (180.0 / math.pi)
+        
+        # Longitude: 1 meter = 1 / (R_EARTH * cos(lat)) radians
         delta_lon = (x_e / (self.r_earth * math.cos(math.radians(self.lat0)))) * (180.0 / math.pi)
         
         lat = self.lat0 + delta_lat

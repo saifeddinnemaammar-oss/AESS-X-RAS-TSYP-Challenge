@@ -2,13 +2,11 @@ from ultralytics import YOLO
 
 def test_webcam():
     print("[SYS] Loading custom trained model...")
-    # Using your locally trained PyTorch weights for the test
-    model = YOLO(r"runs\detect\writer_robot_vision-2\weights\best.pt")
+    # Pointing to the final v3-4 model
+    model = YOLO("runs/detect/writer_robot_vision_v3-4/weights/best.pt")
 
     print("[SYS] Starting webcam. Press 'q' to quit.")
-    # source="0" opens your default laptop webcam
-    # conf=0.5 means it will only show detections it is at least 50% confident about
-    model.predict(source="0", show=True, conf=0.5)
+    model.predict(source="0", show=True, conf=0.34) # Conf set to 0.34 based on your peak F1-score
 
 if __name__ == '__main__':
     test_webcam()

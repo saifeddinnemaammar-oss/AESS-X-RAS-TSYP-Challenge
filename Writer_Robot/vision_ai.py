@@ -23,8 +23,8 @@ class VisionAI:
             if not success:
                 continue
 
-            # Run inference. conf=0.6 drops false positives
-            results = self.model.predict(frame, imgsz=320, conf=0.6, verbose=False)
+            # Run inference. conf=0.34 aligns with the peak F1 score from our validation metrics
+            results = self.model.predict(frame, imgsz=320, conf=0.34, verbose=False)
 
             for result in results:
                 if len(result.boxes) > 0:
